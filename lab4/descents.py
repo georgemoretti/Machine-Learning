@@ -163,7 +163,10 @@ class BaseDescent:
         np.ndarray
             Разность между текущими и обновленными весами. Этот метод должен быть реализован в подклассах.
         """
-        pass
+        step = -self.lr() * gradient.astype(np.float64)
+        self.w = self.w.astype(np.float64)
+        self.w += step
+        return step
 
     def calc_gradient(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
@@ -181,7 +184,23 @@ class BaseDescent:
         np.ndarray
             Градиент функции потерь по весам. Этот метод должен быть реализован в подклассах.
         """
-        pass
+        y_pred = self.predict(x)
+        error = y_pred - y
+    
+        if self.loss_function == LossFunction.MSE:
+            gradient = 2 * x.T @ error / len(y)
+        elif self.loss_function == LossFunction.MAE:
+            gradient = x.T @ np.sign(error) / len(y)
+        elif self.loss_function == LossFunction.LogCosh:
+            gradient = x.T @ np.tanh(error) / len(y)
+        elif self.loss_function == LossFunction.Huber:
+            delta = 1.0  # Huber delta
+            condition = np.abs(error) <= delta
+            gradient = (x.T @ (np.where(condition, error, delta * np.sign(error)))) / len(y)
+        else:
+            raise ValueError("Unknown loss function")
+    
+        return gradient
 
     def calc_loss(self, x: np.ndarray, y: np.ndarray) -> float:
         """
@@ -199,9 +218,21 @@ class BaseDescent:
         float
             Значение функции потерь.
         """
-        predictions = self.predict(x)  
-        loss = np.mean((y - predictions) ** 2)  
-        return loss
+        y_pred = self.predict(x)
+        if self.loss_function == LossFunction.MSE:
+            return np.mean((y_pred - y) ** 2)
+        elif self.loss_function == LossFunction.MAE:
+            return np.mean(np.abs(y_pred - y))
+        elif self.loss_function == LossFunction.LogCosh:
+            return np.mean(np.log(np.cosh(y_pred - y)))
+        elif self.loss_function == LossFunction.Huber:
+            error = y_pred - y
+            delta = 1.0  # Huber delta
+            return np.mean(np.where(np.abs(error) <= delta, 
+                                0.5 * error**2, 
+                                delta * (np.abs(error) - 0.5 * delta)))
+        else:
+            raise ValueError("Unknown loss function")
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         """
@@ -223,85 +254,74 @@ class BaseDescent:
 class VanillaGradientDescent(BaseDescent):
     """
     Класс полного градиентного спуска.
-
-    Методы
-    -------
-    update_weights(gradient: np.ndarray) -> np.ndarray
-        Обновление весов с учетом градиента.
-    calc_gradient(x: np.ndarray, y: np.ndarray) -> np.ndarray
-        Вычисление градиента функции потерь по весам.
     """
 
     def update_weights(self, gradient: np.ndarray) -> np.ndarray:
         """
         Обновление весов на основе градиента.
-
-        Parameters
-        ----------
-        gradient : np.ndarray
-            Градиент функции потерь по весам.
-
-        Returns
-        -------
-        np.ndarray
-            Разность весов (w_{k + 1} - w_k).
         """
-        lr = self.lr()  
-        delta_w = -lr * gradient 
-        self.w += delta_w 
-        return delta_w
+        step = -self.lr() * gradient
+        self.w += step
+        return step
 
     def calc_gradient(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
         Вычисление градиента функции потерь по весам.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Массив признаков.
-        y : np.ndarray
-            Массив целевых переменных.
-
-        Returns
-        -------
-        np.ndarray
-            Градиент функции потерь по весам.
         """
-        n_samples = x.shape[0]  
-        predictions = self.predict(x) 
-        gradient = 2 / n_samples * x.T @ (predictions - y)  
+        y_pred = self.predict(x)
+        error = y_pred - y
+        
+        if self.loss_function == LossFunction.MSE:
+            gradient = 2 * x.T @ error / len(y)
+        elif self.loss_function == LossFunction.MAE:
+            gradient = x.T @ np.sign(error) / len(y)
+        elif self.loss_function == LossFunction.LogCosh:
+            gradient = x.T @ np.tanh(error) / len(y)
+        elif self.loss_function == LossFunction.Huber:
+            delta = 1.0  # Huber delta
+            error = y_pred - y
+            condition = np.abs(error) <= delta
+            gradient = (x.T @ (np.where(condition, error, delta * np.sign(error)))) / len(y)
+        else:
+            raise ValueError("Unknown loss function")
+        
         return gradient
 
 
 class StochasticDescent(VanillaGradientDescent):
     """
-    Класс стохастического градиентного спуска.
+    Класс стохастического градиентного спуска с улучшенной обработкой батчей.
 
     Parameters
     ----------
+    dimension : int
+        Размерность пространства признаков.
+    lambda_ : float, optional
+        Скорость обучения. По умолчанию 1e-3.
     batch_size : int, optional
         Размер мини-пакета. По умолчанию 50.
+    loss_function : LossFunction, optional
+        Функция потерь. По умолчанию MSE.
+    replace : bool, optional
+        Производить ли выборку с заменой. По умолчанию False.
 
     Attributes
     ----------
     batch_size : int
         Размер мини-пакета.
-
-    Методы
-    -------
-    calc_gradient(x: np.ndarray, y: np.ndarray) -> np.ndarray
-        Вычисление градиента функции потерь по мини-пакетам.
+    replace : bool
+        Флаг выборки с заменой.
     """
 
     def __init__(self, dimension: int, lambda_: float = 1e-3, batch_size: int = 50,
-                 loss_function: LossFunction = LossFunction.MSE):
-
+                 loss_function: LossFunction = LossFunction.MSE, replace: bool = False):
         super().__init__(dimension, lambda_, loss_function)
-        self.batch_size = batch_size
+        self.batch_size = min(batch_size, dimension)  # Не больше размерности
+        self.replace = replace
 
     def calc_gradient(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
-        Вычисление градиента функции потерь по мини-пакетам.
+        Вычисление градиента функции потерь по мини-пакету с проверками.
 
         Parameters
         ----------
@@ -313,16 +333,39 @@ class StochasticDescent(VanillaGradientDescent):
         Returns
         -------
         np.ndarray
-            Градиент функции потерь по весам, вычисленный по мини-пакету.
-        """
-        n_samples = x.shape[0]  
-        batch_indices = np.random.randint(0, n_samples, self.batch_size) 
-        x_batch = x[batch_indices]  
-        y_batch = y[batch_indices]  
+            Градиент функции потерь по весам.
 
-        predictions = self.predict(x_batch)  
-        gradient = 2 / self.batch_size * x_batch.T @ (predictions - y_batch)  
-        return gradient
+        Raises
+        ------
+        ValueError
+            Если размеры x и y не совпадают или данные пусты.
+        """
+        if len(x) != len(y):
+            raise ValueError(f"x and y must have same length, got {len(x)} and {len(y)}")
+        if len(y) == 0:
+            raise ValueError("Cannot calculate gradient on empty data")
+        
+        # Адаптивный размер батча если выборка слишком мала
+        current_batch_size = min(self.batch_size, len(y))
+        
+        # Выбор индексов для батча
+        if self.replace:
+            batch_indices = np.random.choice(len(y), size=current_batch_size, replace=True)
+        else:
+            batch_indices = np.random.choice(len(y), size=current_batch_size, replace=False)
+        
+        try:
+            x_batch = x[batch_indices]
+            y_batch = y[batch_indices]
+            return super().calc_gradient(x_batch, y_batch)
+        except IndexError as e:
+            raise IndexError(f"Batch indices out of bounds. Check your data dimensions. Error: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Error calculating gradient: {str(e)}")
+
+    def set_batch_size(self, batch_size: int):
+        """Безопасное обновление размера батча"""
+        self.batch_size = max(1, min(batch_size, self.dimension))
 
 
 class MomentumDescent(VanillaGradientDescent):
@@ -383,11 +426,14 @@ class MomentumDescent(VanillaGradientDescent):
         np.ndarray
             Разность весов (w_{k + 1} - w_k).
         """
-        lr = self.lr()  
-        self.h = self.alpha * self.h + lr * gradient  
-        delta_w = -self.h  
-        self.w += delta_w  
-        return delta_w
+        # Обновляем вектор момента
+        self.h = self.alpha * self.h + self.lr() * gradient
+        
+        # Обновляем веса
+        step = -self.h
+        self.w += step
+        
+        return step
 
 
 class Adam(VanillaGradientDescent):
@@ -462,78 +508,146 @@ class Adam(VanillaGradientDescent):
         np.ndarray
             Разность весов (w_{k + 1} - w_k).
         """
-        self.iteration += 1  
-        lr = self.lr()  
-
+        self.iteration += 1
+        
+        # Обновляем моменты
         self.m = self.beta_1 * self.m + (1 - self.beta_1) * gradient
         self.v = self.beta_2 * self.v + (1 - self.beta_2) * (gradient ** 2)
+        
+        # Вычисляем моменты
         m_hat = self.m / (1 - self.beta_1 ** self.iteration)
-
         v_hat = self.v / (1 - self.beta_2 ** self.iteration)
-
-        delta_w = -lr * m_hat / (np.sqrt(v_hat) + self.eps)
-        self.w += delta_w
-
-        return delta_w
+        
+        step = -self.lr() * m_hat / (np.sqrt(v_hat) + self.eps)
+        self.w += step
+        
+        return step
 
 
 class BaseDescentReg(BaseDescent):
     """
-    Базовый класс для градиентного спуска с регуляризацией.
+    Базовый класс для градиентного спуска с L2-регуляризацией.
 
     Параметры
     ----------
     *args : tuple
         Аргументы, передаваемые в базовый класс.
     mu : float, optional
-        Коэффициент регуляризации. По умолчанию равен 0.
+        Коэффициент L2-регуляризации. По умолчанию 0.
     **kwargs : dict
         Ключевые аргументы, передаваемые в базовый класс.
 
     Атрибуты
     ----------
     mu : float
-        Коэффициент регуляризации.
+        Коэффициент L2-регуляризации.
 
     Методы
     -------
     calc_gradient(x: np.ndarray, y: np.ndarray) -> np.ndarray
-        Вычисление градиента функции потерь с учетом L2 регуляризации по весам.
+        Вычисление градиента функции потерь с учетом L2 регуляризации.
+    calc_loss(x: np.ndarray, y: np.ndarray) -> float
+        Вычисление полной функции потерь (основная + регуляризация).
     """
 
     def __init__(self, *args, mu: float = 0, **kwargs):
         """
         Инициализация базового класса для градиентного спуска с регуляризацией.
+
+        Parameters
+        ----------
+        mu : float
+            Коэффициент L2-регуляризации (μ).
+            Определяет силу штрафа за большие значения весов.
         """
         super().__init__(*args, **kwargs)
-
         self.mu = mu
 
     def calc_gradient(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
-        Вычисление градиента функции потерь и L2 регуляризации по весам.
+        Вычисление полного градиента (основной + регуляризация).
+
+        Формула:
+        ∇Q(w) = ∇L(w) + μ * w
+        где L(w) - основная функция потерь,
+        μ - коэффициент регуляризации.
 
         Parameters
         ----------
-        x : np.ndarray
-            Массив признаков.
-        y : np.ndarray
-            Массив целевых переменных.
+        x : np.ndarray, shape (n_samples, n_features)
+            Матрица признаков.
+        y : np.ndarray, shape (n_samples,)
+            Вектор целевых значений.
 
         Returns
         -------
-        np.ndarray
-            Градиент функции потерь с учетом L2 регуляризации по весам.
+        np.ndarray, shape (n_features,)
+            Полный градиент функции потерь.
         """
-        l2_gradient: np.ndarray = np.zeros_like(x.shape[1])  
+        # Основной градиент от родительского класса
+        main_gradient = super().calc_gradient(x, y)
+        
+        # Градиент регуляризационного члена (μ * w)
+        reg_gradient = self.mu * self.w
+        
+        # Проверка совпадения размерностей
+        if main_gradient.shape != reg_gradient.shape:
+            raise ValueError(
+                f"Несовпадение размеров: основной градиент {main_gradient.shape}, "
+                f"градиент регуляризации {reg_gradient.shape}"
+            )
+        
+        return main_gradient + reg_gradient
 
-        return super().calc_gradient(x, y) + l2_gradient * self.mu
+    def calc_loss(self, x: np.ndarray, y: np.ndarray) -> float:
+        """
+        Вычисление полной функции потерь: L(w) + μ/2 * ||w||².
+
+        Parameters
+        ----------
+        x : np.ndarray, shape (n_samples, n_features)
+            Матрица признаков.
+        y : np.ndarray, shape (n_samples,)
+            Вектор целевых значений.
+
+        Returns
+        -------
+        float
+            Значение полной функции потерь.
+        """
+        # Основная функция потерь
+        base_loss = super().calc_loss(x, y)
+        
+        # L2-регуляризационный член (μ/2 * ||w||²)
+        reg_loss = 0.5 * self.mu * np.sum(self.w ** 2)
+        
+        return base_loss + reg_loss
+
+    def get_regularization_loss(self) -> float:
+        """
+        Вычисляет только значение регуляризационного члена.
+
+        Returns
+        -------
+        float
+            Значение регуляризации: μ/2 * ||w||²
+        """
+        return 0.5 * self.mu * np.sum(self.w ** 2)
 
 
 class VanillaGradientDescentReg(BaseDescentReg, VanillaGradientDescent):
     """
     Класс полного градиентного спуска с регуляризацией.
     """
+
+    def calc_gradient(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """
+        Вычисление градиента функции потерь с учетом L2 регуляризации по весам.
+        """
+        gradient = super().calc_gradient(x, y)
+        
+        l2_gradient = 2 * self.mu * self.w
+        return gradient + l2_gradient
 
 
 class StochasticDescentReg(BaseDescentReg, StochasticDescent):
