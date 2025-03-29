@@ -49,40 +49,42 @@ class LinearRegression:
 
     def fit(self, x: np.ndarray, y: np.ndarray) -> LinearRegression:
         """
-        Обучение модели линейной регрессии, подбор весов для наборов данных x и y.
-
-        Parameters
+        Обучение модели на данных x и y через градиентный спуск.
+        
+        Параметры
         ----------
         x : np.ndarray
-            Массив признаков.
+            Матрица признаков (с единицами в последнем столбце)
         y : np.ndarray
-            Массив целевых переменных.
-
-        Returns
+            Вектор целевых значений
+            
+        Возвращает
         -------
-        self : LinearRegression
-            Возвращает экземпляр класса с обученными весами.
-
+        self
+            Обученная модель
         """
-        self.loss_history.append(self.calc_loss(x, y))
-
-        prev_weights = np.copy(self.descent.w)
-
-        for iteration in range(self.max_iter):
-            delta_w = self.descent.step(x, y)
-
-            current_loss = self.calc_loss(x, y)
-            self.loss_history.append(current_loss)
-
-            weight_difference_norm = np.linalg.norm(delta_w) ** 2
-            if weight_difference_norm < self.tolerance:
-                break
-
+        # Начальное значение функции потерь
+        self.loss_history = [self.descent.calc_loss(x, y)]
+        
+        for _ in range(self.max_iter):
+            old_weights = self.descent.w.astype(np.float64).copy()
+            
+            # Шаг градиентного спуска
+            weight_update = self.descent.step(x, y)
+            
+            # Проверка на NaN в весах
             if np.any(np.isnan(self.descent.w)):
                 break
+                
+            # Евклидова норма изменения весов
+            weight_diff_norm = np.linalg.norm(weight_update)
 
-            prev_weights = np.copy(self.descent.w)
-
+            self.loss_history.append(self.descent.calc_loss(x, y))
+            
+            # Проверка критерия остановки
+            if weight_diff_norm < self.tolerance:
+                break
+                
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
